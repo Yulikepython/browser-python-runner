@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Python コード実行 (フロントエンドのみ)</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.26.1/full/pyodide.js"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/theme/material-darker.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/mode/python/python.min.js"></script>
+  </head>
+  <body>
+    <h1>Python コード実行 (Pyodide)</h1>
+    <div class="container">
+      <div class="editor-pane">
+        <h2>コード入力</h2>
+        <textarea id="code-input"></textarea>
+        <button id="run-button">実行</button>
+        <div id="loading-indicator" style="display: none;">
+          Pyodide 準備中...
+        </div>
+      </div>
+      <div class="output-pane">
+        <h2>実行結果</h2>
+        <pre id="output"></pre>
+      </div>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>

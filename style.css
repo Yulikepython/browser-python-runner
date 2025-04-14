@@ -1,0 +1,86 @@
+body {
+  font-family: sans-serif;
+  margin: 20px;
+  background-color: #f4f4f4;
+}
+
+.container {
+  display: flex;
+  gap: 20px;
+  height: 70vh; /* 高さを調整 */
+}
+
+.editor-pane,
+.output-pane {
+  flex: 1; /* 幅を均等に分割 */
+  background-color: #fff;
+  padding: 15px;
+  border-radius: 5px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+}
+
+h1,
+h2 {
+  color: #333;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 5px;
+  margin-top: 0;
+}
+
+/* CodeMirror スタイル */
+.CodeMirror {
+  border: 1px solid #ccc;
+  height: auto; /* 高さを自動調整 */
+  flex-grow: 1; /* 残りのスペースを埋める */
+  font-size: 14px;
+}
+
+#code-input {
+  /* CodeMirrorを使わない場合の代替 */
+  width: 100%;
+  flex-grow: 1;
+  font-family: monospace;
+  font-size: 14px;
+  border: 1px solid #ccc;
+  box-sizing: border-box; /* paddingを含めて計算 */
+}
+
+#run-button {
+  margin-top: 10px;
+  padding: 10px 15px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+#run-button:hover {
+  background-color: #0056b3;
+}
+
+#run-button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+#output {
+  white-space: pre-wrap; /* 長い行を折り返す */
+  word-wrap: break-word; /* 単語の途中でも折り返す */
+  background-color: #e9e9e9;
+  padding: 10px;
+  border-radius: 3px;
+  flex-grow: 1; /* 残りのスペースを埋める */
+  overflow-y: auto; /* 縦方向にスクロール可能に */
+  font-family: monospace;
+  font-size: 14px;
+  color: #333;
+}
+
+#loading-indicator {
+  margin-top: 10px;
+  color: #666;
+}
