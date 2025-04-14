@@ -56,11 +56,36 @@ function appendOutput(message) {
 function loadCodeFromUrlParam() {
   const urlParams = new URLSearchParams(window.location.search);
   const encodedCode = urlParams.get("code");
+  const isBase64 = urlParams.get("base64") === "true";
+  
   if (encodedCode) {
     try {
-      const decodedCode = decodeURIComponent(encodedCode);
+      let decodedCode;
+      
+      if (isBase64) {
+        // Base64エンコードされたコードをデコード
+        try {
+          // UTF-8バイト配列としてデコード
+          const binaryString = atob(encodedCode);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          // UTF-8バイト配列から文字列に変換
+          decodedCode = new TextDecoder().decode(bytes);
+        } catch (e) {
+          console.error("UTF-8 Base64デコードに失敗しました:", e);
+          // フォールバック：単純なbase64デコードを試みる
+          decodedCode = atob(encodedCode);
+        }
+        appendOutput("Base64形式のURLパラメータからコードを読み込みました。\n");
+      } else {
+        // 通常のURLエンコードされたコードをデコード
+        decodedCode = decodeURIComponent(encodedCode);
+        appendOutput("URLパラメータからコードを読み込みました。\n");
+      }
+      
       editor.setValue(decodedCode); // エディタに設定
-      appendOutput("URLパラメータからコードを読み込みました。\n");
     } catch (e) {
       console.error("Failed to decode code from URL parameter:", e);
       appendOutput("[Error] URLパラメータのコードのデコードに失敗しました。\n");
@@ -71,6 +96,163 @@ function loadCodeFromUrlParam() {
       "print('Hello from Pyodide!')\n\nimport sys\nprint(f'Python version: {sys.version}')"
     );
   }
+}
+
+// Base64エンコード用のヘルパー関数（コードをコピーするボタン用）
+function getBase64CodeUrl() {
+  const code = editor.getValue();
+  
+  // UTF-8文字列をBase64エンコードする（日本語などの非ASCII文字に対応）
+  let base64Code;
+  try {
+    // モダンな方法: TextEncoder + btoa
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(code);
+    base64Code = btoa(
+      Array.from(bytes)
+        .map(byte => String.fromCharCode(byte))
+        .join('')
+    );
+  } catch (e) {
+    // エラーが発生した場合はURLエンコードを使用
+    console.error("Base64エンコードに失敗しました:", e);
+    const url = new URL(window.location.href);
+    url.searchParams.set("code", encodeURIComponent(code));
+    url.searchParams.delete("base64"); // base64フラグを削除
+    return url.href;
+  }
+  
+  const url = new URL(window.location.href);
+  url.searchParams.set("code", base64Code);
+  url.searchParams.set("base64", "true");
+  return url.href;
+}
+
+// URLをコピーするボタン用の関数 (互換性のある方法)
+function copyCodeUrl() {
+  const url = getBase64CodeUrl();
+  
+  // モダンブラウザならClipboard APIを使用
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(url)
+      .then(() => {
+        // 成功メッセージを表示
+        const originalText = document.getElementById("share-button").textContent;
+        document.getElementById("share-button").textContent = "URLをコピーしました！";
+        setTimeout(() => {
+          document.getElementById("share-button").textContent = originalText;
+        }, 2000);
+      })
+      .catch(err => {
+        console.error("URLのコピーに失敗しました:", err);
+        // フォールバックとして従来の方法を試す
+        copyCodeUrlFallback(url);
+      });
+  } else {
+    // 古いブラウザでは従来の方法を使用
+    copyCodeUrlFallback(url);
+  }
+}
+
+// URLコピーのフォールバック処理 (古いブラウザ向け)
+function copyCodeUrlFallback(url) {
+  // テキストエリアを作成して、URLをコピー
+  const textArea = document.createElement("textarea");
+  textArea.value = url;
+  textArea.style.position = "fixed";  // ビューの外側に配置
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+
+  try {
+    const successful = document.execCommand("copy");
+    if (successful) {
+      // 成功メッセージを表示
+      const originalText = document.getElementById("share-button").textContent;
+      document.getElementById("share-button").textContent = "URLをコピーしました！";
+      setTimeout(() => {
+        document.getElementById("share-button").textContent = originalText;
+      }, 2000);
+    } else {
+      console.error("URLのコピーに失敗しました");
+      alert("URLのコピーに失敗しました");
+    }
+  } catch (err) {
+    console.error("URLのコピーに失敗しました:", err);
+    alert("URLのコピーに失敗しました");
+  }
+
+  // クリーンアップ
+  document.body.removeChild(textArea);
+}
+
+// --- コードを適切な形式でクリップボードにコピーする ---
+function copyCodeToClipboard() {
+  const code = editor.getValue();
+  
+  // テキストエリアを作成して、改行を保持したまま正しくコピー
+  const textArea = document.createElement("textarea");
+  textArea.value = code;
+  textArea.style.position = "fixed";  // ビューの外側に配置
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+
+  try {
+    const successful = document.execCommand("copy");
+    if (successful) {
+      // 成功メッセージを表示
+      const originalText = document.getElementById("copy-button").textContent;
+      document.getElementById("copy-button").textContent = "コピーしました！";
+      setTimeout(() => {
+        document.getElementById("copy-button").textContent = originalText;
+      }, 2000);
+    } else {
+      console.error("コピーに失敗しました");
+    }
+  } catch (err) {
+    console.error("コピーに失敗しました:", err);
+  }
+
+  // クリーンアップ
+  document.body.removeChild(textArea);
+}
+
+// --- モダンブラウザ向けのクリップボード機能 ---
+// 古いdocument.execCommandの代わりにClipboard APIを使う場合
+function copyCodeModern() {
+  const code = editor.getValue();
+  navigator.clipboard.writeText(code)
+    .then(() => {
+      // 成功メッセージを表示
+      const originalText = document.getElementById("copy-button").textContent;
+      document.getElementById("copy-button").textContent = "コピーしました！";
+      setTimeout(() => {
+        document.getElementById("copy-button").textContent = originalText;
+      }, 2000);
+    })
+    .catch(err => {
+      console.error("クリップボードのコピーに失敗しました:", err);
+      // フォールバックとして従来の方法を試す
+      copyCodeToClipboard();
+    });
+}
+
+// --- 最適なコピー機能を選択してセットアップ ---
+function setupCopyFunction() {
+  // ボタン参照を取得
+  const copyButton = document.getElementById("copy-button");
+  
+  // ボタンのイベントリスナーをセットアップ
+  if (copyButton) {
+    if (navigator.clipboard) {
+      copyButton.onclick = copyCodeModern;  // モダンなClipboard APIを優先
+    } else {
+      copyButton.onclick = copyCodeToClipboard;  // 従来のexecCommandを使用
+    }
+  }
+  
+  // 共有URLボタンのイベントリスナーはHTMLに直接記述されているためここでは変更しない
 }
 
 // --- コード実行処理 ---
@@ -110,3 +292,5 @@ runButton.addEventListener("click", runCode);
 
 // --- 初期化実行 ---
 initializePyodide();
+// コピー機能をセットアップ
+window.addEventListener('load', setupCopyFunction);

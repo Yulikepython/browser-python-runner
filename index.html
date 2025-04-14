@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Python コード実行 (フロントエンドのみ)</title>
+    <title>browser-python-runner</title>
     <link rel="stylesheet" href="style.css" />
     <script src="https://cdn.jsdelivr.net/pyodide/v0.26.1/full/pyodide.js"></script>
     <link
@@ -18,12 +18,16 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/mode/python/python.min.js"></script>
   </head>
   <body>
-    <h1>Python コード実行 (Pyodide)</h1>
+    <h1>browser-python-runner</h1>
     <div class="container">
       <div class="editor-pane">
         <h2>コード入力</h2>
         <textarea id="code-input"></textarea>
-        <button id="run-button">実行</button>
+        <div class="button-group">
+          <button id="run-button">実行</button>
+          <button id="copy-button" onclick="copyCodeToClipboard()">コードをコピー</button>
+          <button id="share-button" class="secondary-button" onclick="copyCodeUrl()">コード共有URLをコピー</button>
+        </div>
         <div id="loading-indicator" style="display: none;">
           Pyodide 準備中...
         </div>
@@ -33,6 +37,15 @@
         <pre id="output"></pre>
       </div>
     </div>
+
+    <footer class="site-footer">
+      <div class="footer-content">
+        <p>&copy; 2025 Hiroshi Nishito - <a href="https://github.com/Yulikepython/browser-python-runner/LICENSE">MIT License</a></p>
+        <div class="footer-links">
+          <p>参考ブログ: <a href="https://itc.tokyo" target="_blank">itc.tokyo</a></p>
+        </div>
+      </div>
+    </footer>
 
     <script src="script.js"></script>
   </body>
