@@ -11,13 +11,46 @@ let editor = null; // CodeMirror instance
 const MAX_FILE_SIZE_MB = 20;  // 1ファイルの上限
 const MAX_TOTAL_SIZE_MB = 100; // /tmp の合計使用量目安
 
-// --- CodeMirrorの初期化 ---
-// CodeMirror を使う場合 (推奨)
-editor = CodeMirror.fromTextArea(codeInputTextArea, {
-  lineNumbers: true,
-  mode: "python",
-  theme: "material-darker", // 好みのテーマを選択
-});
+// --- CodeMirrorの初期化（CDNが読めない場合にフォールバック） ---
+try {
+  if (window.CodeMirror) {
+    // CodeMirror を使う場合 (推奨)
+    editor = CodeMirror.fromTextArea(codeInputTextArea, {
+      lineNumbers: true,
+      mode: "python",
+      theme: "material-darker", // 好みのテーマを選択
+    });
+  } else {
+    throw new Error("CodeMirror is not available");
+  }
+} catch (e) {
+  console.warn("CodeMirror 初期化に失敗しました。プレーンなテキストエリアにフォールバックします。", e);
+  // 最低限の互換APIを提供
+  editor = {
+    getValue: () => codeInputTextArea.value,
+    setValue: (v) => {
+      codeInputTextArea.value = v;
+    },
+  };
+  // 可能ならUIにも通知
+  try {
+    const out = document.getElementById("output");
+    if (out) {
+      out.textContent += "[Warning] CodeMirrorの読み込みに失敗したため、プレーンなテキストエリアで動作します。ネットワークやCDNのブロックを確認してください。\n";
+    }
+  } catch (_) {}
+}
+
+// リソース読み込みエラーを拾って表示（CDN失敗の可視化）
+window.addEventListener('error', (ev) => {
+  try {
+    if (!outputArea) return;
+    const msg = ev?.message || ev?.error?.message || String(ev);
+    if (msg) {
+      outputArea.textContent += `[Error] スクリプト/リソースの読み込みで問題が発生: ${msg}\n`;
+    }
+  } catch (_) {}
+}, true);
 
 // --- Pyodideの初期化 ---
 async function initializePyodide() {
