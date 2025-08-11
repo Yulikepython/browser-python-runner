@@ -1,6 +1,7 @@
 const codeInputTextArea = document.getElementById("code-input");
 const outputArea = document.getElementById("output");
 const runButton = document.getElementById("run-button");
+const preloadButton = document.getElementById("preload-button");
 const loadingIndicator = document.getElementById("loading-indicator");
 
 let pyodide = null;
@@ -29,8 +30,27 @@ async function initializePyodide() {
       batched: (msg) => appendOutput(msg + "\n"),
     });
     pyodide.setStderr({
-      batched: (msg) => appendOutput(`[Error] ${msg}\n`),
+      batched: (msg) => {
+        // 複数行に分割して Warning を判別
+        const lines = String(msg).split("\n").filter(Boolean);
+        for (const line of lines) {
+          const isWarning = /warning/i.test(line);
+          appendOutput(`${isWarning ? "[Warning]" : "[Error]"} ${line}\n`);
+        }
+      },
     });
+
+    // pandas 由来の DeprecationWarning を初期化時に抑制（ユーザーの出力をノイズから保護）
+    try {
+      pyodide.runPython(
+        [
+          "import warnings",
+          "warnings.filterwarnings('ignore', category=DeprecationWarning, module='pandas')",
+        ].join("\n")
+      );
+    } catch (werr) {
+      console.warn("Failed to set warning filters:", werr);
+    }
   } catch (error) {
     outputArea.textContent += `Pyodideの読み込みに失敗しました: ${error}\n`;
     console.error("Pyodide loading failed:", error);
@@ -275,6 +295,27 @@ async function runCode() {
   runButton.disabled = true; // 実行中はボタンを無効化
 
   try {
+    // ユーザーコードの import から必要な Pyodide パッケージを自動で読み込む
+    // 例: import pandas as pd -> pandas と依存パッケージ(numpy等)を自動取得
+    try {
+      const loaded = await pyodide.loadPackagesFromImports(code);
+      if (loaded && loaded.length) {
+        // 返却値がオブジェクト列のケースに対応して人間可読に整形
+        const names = loaded.map((item) => {
+          if (typeof item === 'string') return item;
+          if (item && typeof item === 'object') {
+            return item.name || item.package || item.package_name || JSON.stringify(item);
+          }
+          return String(item);
+        });
+        appendOutput(`パッケージを読み込みました: ${names.join(', ')}\n`);
+      }
+    } catch (pkgErr) {
+      // パッケージ解析/取得に失敗してもコード実行は試みる
+      appendOutput(`[Warning] パッケージの読み込みに失敗: ${pkgErr}\n`);
+      console.warn("Package load failed:", pkgErr);
+    }
+
     // Pythonコードを実行 (非同期が良い場合が多い)
     await pyodide.runPythonAsync(code);
   } catch (error) {
@@ -294,3 +335,33 @@ runButton.addEventListener("click", runCode);
 initializePyodide();
 // コピー機能をセットアップ
 window.addEventListener('load', setupCopyFunction);
+
+// --- よく使うライブラリを事前に読み込む（プリロード） ---
+async function preloadCommonPackages() {
+  if (!pyodide) {
+    appendOutput("Pyodideが準備できていません。\n");
+    return;
+  }
+  const common = [
+    // 需要の高い順に調整可能
+    "micropip", // 将来的なwheelインストール対応を見据え
+    "numpy",
+    "pandas",
+    "matplotlib",
+  ];
+  preloadButton.disabled = true;
+  appendOutput(`プリロード開始: ${common.join(', ')}\n`);
+  try {
+    await pyodide.loadPackage(common);
+    appendOutput("プリロード完了\n");
+  } catch (e) {
+    appendOutput(`[Warning] プリロードに失敗: ${e}\n`);
+    console.warn("Preload failed:", e);
+  } finally {
+    preloadButton.disabled = false;
+  }
+}
+
+if (preloadButton) {
+  preloadButton.addEventListener('click', preloadCommonPackages);
+}
