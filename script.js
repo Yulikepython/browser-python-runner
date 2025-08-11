@@ -7,6 +7,10 @@ const loadingIndicator = document.getElementById("loading-indicator");
 let pyodide = null;
 let editor = null; // CodeMirror instance
 
+// --- アップロード関連の設定 ---
+const MAX_FILE_SIZE_MB = 20;  // 1ファイルの上限
+const MAX_TOTAL_SIZE_MB = 100; // /tmp の合計使用量目安
+
 // --- CodeMirrorの初期化 ---
 // CodeMirror を使う場合 (推奨)
 editor = CodeMirror.fromTextArea(codeInputTextArea, {
@@ -328,6 +332,14 @@ async function runCode() {
       console.warn("Package load failed:", pkgErr);
     }
 
+    // Pyodideの公式パッケージに無い純Python依存はmicropipで補完（例: openpyxl, xlrd）
+    try {
+      await ensurePurePythonPackages(code);
+    } catch (pipErr) {
+      appendOutput(`[Warning] 依存パッケージのインストールに失敗: ${pipErr}\n`);
+      console.warn("Micropip install failed:", pipErr);
+    }
+
     // Pythonコードを実行 (非同期が良い場合が多い)
     await pyodide.runPythonAsync(code);
   } catch (error) {
@@ -347,6 +359,88 @@ runButton.addEventListener("click", runCode);
 initializePyodide();
 // コピー機能をセットアップ
 window.addEventListener('load', setupCopyFunction);
+
+// --- ファイル入力: ローカルのExcel(.xlsx)をPyodideの仮想FSへ ---
+function setupFileLoader() {
+  const input = document.getElementById('file-input');
+  const clearBtn = document.getElementById('clear-tmp-button');
+  const usageDisplay = document.getElementById('usage-display');
+  if (input) {
+    input.addEventListener('change', async (e) => {
+      try {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        if (!pyodide) {
+          appendOutput("Pyodideが準備できていません。\n");
+          return;
+        }
+
+        // 1ファイルのサイズチェック
+        const fileSizeMB = file.size / (1024 * 1024);
+        if (fileSizeMB > MAX_FILE_SIZE_MB) {
+          appendOutput(`[Error] ファイルが大きすぎます (${fileSizeMB.toFixed(2)} MB)。上限は ${MAX_FILE_SIZE_MB} MB です。\n`);
+          return;
+        }
+
+        // /tmp ディレクトリ確保
+        try { pyodide.FS.mkdir('/tmp'); } catch (_) {}
+
+        // 受け取ったファイルをPyodideの仮想FSへ保存
+        const buf = new Uint8Array(await file.arrayBuffer());
+        const mountPath = `/tmp/${file.name}`;
+        pyodide.FS.writeFile(mountPath, buf);
+        appendOutput(`アップロード完了: ${mountPath}\n`);
+
+        // エディタへサンプルコードを挿入（上書きはしない。先頭に追記）
+        const hint = [
+          '# Excelを読み込むサンプル (xlsx -> openpyxl)',
+          'import pandas as pd',
+          'import openpyxl  # xlsx読み込みエンジン',
+          `path = r"${mountPath}"`,
+          'df = pd.read_excel(path, engine="openpyxl")',
+          'print(df.head())',
+          ''
+        ].join("\n");
+        const current = editor.getValue();
+        editor.setValue(hint + current);
+        updateUsageDisplay(usageDisplay);
+        const totalMB = getDirSizeBytes('/tmp') / (1024 * 1024);
+        if (totalMB > MAX_TOTAL_SIZE_MB) {
+          appendOutput(`[Warning] /tmp の合計使用量が ${totalMB.toFixed(2)} MB です。目安の ${MAX_TOTAL_SIZE_MB} MB を超えています。\n`);
+        }
+      } catch (err) {
+        console.error('ファイルの取り込みに失敗:', err);
+        appendOutput(`[Error] ファイルの取り込みに失敗: ${err}\n`);
+      } finally {
+        // 同じファイル選択でchangeが発火しないのを防ぐためリセット
+        e.target.value = '';
+      }
+    });
+  }
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      if (!pyodide) {
+        appendOutput("Pyodideが準備できていません。\n");
+        return;
+      }
+      try {
+        clearTmpDir();
+        appendOutput("/tmp をクリアしました。\n");
+      } catch (e) {
+        appendOutput(`[Error] /tmp のクリアに失敗: ${e}\n`);
+        console.error(e);
+      } finally {
+        updateUsageDisplay(usageDisplay);
+      }
+    });
+  }
+
+  // 初期表示
+  updateUsageDisplay(usageDisplay);
+}
+
+window.addEventListener('load', setupFileLoader);
 
 // --- よく使うライブラリを事前に読み込む（プリロード） ---
 async function preloadCommonPackages() {
@@ -376,4 +470,108 @@ async function preloadCommonPackages() {
 
 if (preloadButton) {
   preloadButton.addEventListener('click', preloadCommonPackages);
+}
+
+// --- 純Pythonパッケージの自動インストール（micropip） ---
+async function ensurePurePythonPackages(code) {
+  // 参照検出（ゆるめ）：openpyxl / xlrd
+  const needsOpenpyxl = /\bimport\s+openpyxl\b|\bfrom\s+openpyxl\s+import\b|engine\s*=\s*['\"]openpyxl['\"]/i.test(code);
+  const needsXlrd = /\bimport\s+xlrd\b|\bfrom\s+xlrd\s+import\b|engine\s*=\s*['\"]xlrd['\"]/i.test(code);
+  if (!needsOpenpyxl && !needsXlrd) return;
+
+  // micropip をロード
+  await pyodide.loadPackage('micropip');
+
+  const pkgs = [];
+  if (needsOpenpyxl) pkgs.push('openpyxl');
+  if (needsXlrd) pkgs.push('xlrd');
+  if (!pkgs.length) return;
+
+  // 既にインポート可能ならスキップ。Pyodideではトップレベルawaitが使える。
+  const py = [
+    'import importlib',
+    'import micropip',
+    `pkgs = ${JSON.stringify(pkgs)}`,
+    'for p in pkgs:',
+    '    try:',
+    '        importlib.import_module(p)',
+    '        continue',
+  '    except Exception:',
+  '        pass',
+    '    try:',
+    '        await micropip.install(p)',
+    '    except Exception as e:',
+    '        print(f"[Warning] micropip install failed for {p}: {e}")'
+  ].join('\n');
+  await pyodide.runPythonAsync(py);
+}
+
+// --- /tmp 使用量表示・ユーティリティ ---
+function updateUsageDisplay(labelEl) {
+  if (!labelEl || !pyodide) return;
+  let bytes = 0;
+  try {
+    bytes = getDirSizeBytes('/tmp');
+  } catch (_) {
+    bytes = 0;
+  }
+  labelEl.textContent = `使用量: ${formatBytes(bytes)}`;
+}
+
+function getDirSizeBytes(path) {
+  const FS = pyodide.FS;
+  let total = 0;
+  function walk(p) {
+    let stat;
+    try { stat = FS.stat(p); } catch { return; }
+    if (FS.isDir(stat.mode)) {
+      let entries = [];
+      try { entries = FS.readdir(p); } catch { entries = []; }
+      for (const name of entries) {
+        if (name === '.' || name === '..') continue;
+        walk(`${p}/${name}`);
+      }
+    } else if (FS.isFile(stat.mode)) {
+      total += stat.size || 0;
+    }
+  }
+  walk(path);
+  return total;
+}
+
+function clearTmpDir() {
+  const FS = pyodide.FS;
+  try { FS.mkdir('/tmp'); } catch (_) {}
+  function rmrf(p) {
+    let stat;
+    try { stat = FS.stat(p); } catch { return; }
+    if (FS.isDir(stat.mode)) {
+      let entries = [];
+      try { entries = FS.readdir(p); } catch { entries = []; }
+      for (const name of entries) {
+        if (name === '.' || name === '..') continue;
+        rmrf(`${p}/${name}`);
+      }
+      if (p !== '/tmp') {
+        try { FS.rmdir(p); } catch (_) {}
+      }
+    } else if (FS.isFile(stat.mode)) {
+      try { FS.unlink(p); } catch (_) {}
+    }
+  }
+  rmrf('/tmp');
+}
+
+function formatBytes(bytes) {
+  const thresh = 1024;
+  if (Math.abs(bytes) < thresh) {
+    return bytes + ' B';
+  }
+  const units = ['KB','MB','GB','TB'];
+  let u = -1;
+  do {
+    bytes /= thresh;
+    ++u;
+  } while (Math.abs(bytes) >= thresh && u < units.length - 1);
+  return bytes.toFixed(2) + ' ' + units[u];
 }
