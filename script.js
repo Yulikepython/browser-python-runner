@@ -391,14 +391,47 @@ function setupFileLoader() {
         pyodide.FS.writeFile(mountPath, buf);
         appendOutput(`アップロード完了: ${mountPath}\n`);
 
+        // 内容がZipベース(.xlsx)かの簡易チェック（PK\x.. シグネチャ）
+        const isZipLike = buf.length >= 2 && buf[0] === 0x50 && buf[1] === 0x4b; // 'PK'
+        const lowerName = file.name.toLowerCase();
+        if (lowerName.endsWith('.xlsx') && !isZipLike) {
+          appendOutput('[Warning] 拡張子は .xlsx ですが、Zip形式ではないため壊れているか .xls/.csv の可能性があります。Excelで「別名で保存」→「Excel ブック (*.xlsx)」で保存し直してください。\n');
+        }
+
         // エディタへサンプルコードを挿入（上書きはしない。先頭に追記）
         const hint = [
-          '# Excelを読み込むサンプル (xlsx -> openpyxl)',
+          '# ファイルを自動判別して読み込むサンプル',
           'import pandas as pd',
-          'import openpyxl  # xlsx読み込みエンジン',
+          'from pathlib import Path',
+          'import zipfile',
+          '# .xlsx を扱う場合は openpyxl が必要',
+          'try:\n    import openpyxl  # noqa: F401\nexcept Exception:\n    pass',
           `path = r"${mountPath}"`,
-          'df = pd.read_excel(path, engine="openpyxl")',
-          'print(df.head())',
+          '',
+          'def read_table_auto(path: str) -> pd.DataFrame:',
+          '    p = Path(path)',
+          "    ext = p.suffix.lower()",
+          "    if ext == '.xlsx':",
+          "        # Zipシグネチャを簡易確認",
+          "        with open(path, 'rb') as f:\n            head = f.read(4)",
+          "        if not (len(head) >= 2 and head[0] == 0x50 and head[1] == 0x4B):",
+          "            # 見かけは .xlsx だが中身がZipでない場合、CSVとしてフォールバック",
+          "            try:\n                df_csv = pd.read_csv(path, engine='python', sep=None)\n                print('[Warning] 拡張子は .xlsx ですがCSVとして読み込みました。正しい形式で保存し直すことをおすすめします。')\n                return df_csv\n            except Exception as _e:\n                raise zipfile.BadZipFile('Not a zip-based .xlsx (possibly .xls or csv)') from _e",
+          "        return pd.read_excel(path, engine='openpyxl')",
+          "    elif ext == '.xls':",
+          "        # 古いExcel形式。xlrd が必要（v2以降は .xls 非対応のため注意）",
+          "        try:\n            import xlrd  # noqa: F401\n        except Exception as e:\n            raise RuntimeError('xls 読み込みには xlrd が必要です。可能なら .xlsx に保存し直してください。') from e",
+          "        return pd.read_excel(path, engine='xlrd')",
+          "    else:",
+          "        # 最後はcsvとして試す",
+          "        return pd.read_csv(path, engine='python', sep=None)",
+          '',
+          'try:',
+          '    df = read_table_auto(path)',
+          '    print(df.head())',
+          'except zipfile.BadZipFile as e:',
+          "    print('[Error] このファイルは有効な .xlsx ではありません。多くの場合、.xls を .xlsx にリネームした時に発生します。Excelで .xlsx として保存し直してください。')",
+          '    # CSVとしての読み込みにも失敗したため終了',
           ''
         ].join("\n");
         const current = editor.getValue();
@@ -484,7 +517,8 @@ async function ensurePurePythonPackages(code) {
 
   const pkgs = [];
   if (needsOpenpyxl) pkgs.push('openpyxl');
-  if (needsXlrd) pkgs.push('xlrd');
+  // xlrd 2.x は .xls を読めないため、互換性の高い 1.2.0 を指定
+  if (needsXlrd) pkgs.push('xlrd==1.2.0');
   if (!pkgs.length) return;
 
   // 既にインポート可能ならスキップ。Pyodideではトップレベルawaitが使える。

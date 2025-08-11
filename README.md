@@ -111,6 +111,36 @@ df = pd.read_excel('/tmp/sample.xlsx', engine='openpyxl')
 - .xls を扱う場合は `xlrd` が必要です。
 - 外部ドメインの URL は CORS 許可が必要です。同一オリジン（この GitHub Pages 内）が安全です。
 
+### トラブルシューティング: zipfile.BadZipFile: File is not a zip file
+
+`pandas.read_excel(..., engine="openpyxl")` 実行時に次のエラーが出る場合があります:
+
+```
+zipfile.BadZipFile: File is not a zip file
+```
+
+主な原因:
+
+- .xls（古い Excel 形式）を .xlsx にリネームしただけで中身が旧形式のまま
+- 実体が CSV/TSV だが拡張子が .xlsx になっている
+- ダウンロード失敗などで壊れたファイル
+
+対策:
+
+1. 本物の .xlsx として保存し直す
+
+- Excel/スプレッドシートで開き、「名前を付けて保存」→「Excel ブック (\*.xlsx)」を選択
+
+2. .xls のまま読みたい場合
+
+- `xlrd` が必要です。Pyodide では純 Python 版 `xlrd` を `micropip` でインストールしてから `engine='xlrd'` を指定してください（ただし xlrd 2.x は .xls 非対応。1.2.0 が必要なケースがあります。互換性に注意）。
+
+3. CSV/TSV の可能性
+
+- `pandas.read_csv(path)` で読み込みを試してください。
+
+本アプリのファイルアップロード時は、先頭バイトに 'PK'（Zip シグネチャ）があるかを簡易チェックし、拡張子 .xlsx なのに Zip でない場合は警告を表示します。
+
 ## 表示ノイズの抑制について
 
 本アプリは、学習やデモ用途での見やすさを重視し、以下のような「動作に支障のないメッセージ」を出力欄に表示しない方針を採用しています。
