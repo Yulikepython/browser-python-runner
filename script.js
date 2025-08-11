@@ -31,21 +31,33 @@ async function initializePyodide() {
     });
     pyodide.setStderr({
       batched: (msg) => {
-        // 複数行に分割して Warning を判別
-        const lines = String(msg).split("\n").filter(Boolean);
-        for (const line of lines) {
-          const isWarning = /warning/i.test(line);
-          appendOutput(`${isWarning ? "[Warning]" : "[Error]"} ${line}\n`);
+        // 受信ブロック全体でフィルタリング
+        const text = String(msg).trim();
+        if (!text) return;
+        // 1) 警告は表示しない（UIに出さない方針）
+        if (/\bwarning\b/i.test(text)) {
+          return;
         }
+        // 2) pandas の pyarrow 告知はノイズとして非表示
+        if (/pyarrow will become a required dependency of pandas/i.test(text)) {
+          return;
+        }
+        // 上記以外はエラーとして表示
+        appendOutput(`[Error] ${text}\n`);
       },
     });
 
-    // pandas 由来の DeprecationWarning を初期化時に抑制（ユーザーの出力をノイズから保護）
+  // 警告全般の抑制（UIに出さない方針のため）
     try {
       pyodide.runPython(
         [
-          "import warnings",
-          "warnings.filterwarnings('ignore', category=DeprecationWarning, module='pandas')",
+      "import warnings",
+      "# ライブラリを問わず、将来互換系の警告を全面的に非表示",
+      "warnings.filterwarnings('ignore', category=DeprecationWarning)",
+      "warnings.filterwarnings('ignore', category=FutureWarning)",
+      "warnings.filterwarnings('ignore', category=ResourceWarning)",
+      "# pandas の pyarrow 告知メッセージをパターンで非表示（モジュール指定なし）",
+      "warnings.filterwarnings('ignore', message=r'(?i).*pyarrow will become a required dependency of pandas.*')",
         ].join("\n")
       );
     } catch (werr) {

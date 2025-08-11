@@ -59,6 +59,28 @@ print(df.describe())
 - サービスワーカーや CDN のキャッシュを活用すると体感速度が向上します（GitHub Pages + CDN キャッシュで十分に実用的です）。
 - ファイル I/O はブラウザの仮想 FS 内で完結します。ローカルファイルは `<input type="file">` などで読み込んでから扱ってください。
 
+## 表示ノイズの抑制について
+
+本アプリは、学習やデモ用途での見やすさを重視し、以下のような「動作に支障のないメッセージ」を出力欄に表示しない方針を採用しています。
+
+- Python の警告（Warning）全般（例: DeprecationWarning, FutureWarning, ResourceWarning）
+- pandas が将来 `pyarrow` を必須化する旨の告知メッセージ
+
+実装の概要:
+
+- Python 側で `warnings.filterwarnings('ignore', ...)` により上記の警告を非表示化
+- 標準エラー出力（stderr）に流れるメッセージのうち、警告や上記告知に該当するものは UI には表示しない
+- 実行に支障のある例外・エラーのみ `[Error]` として表示
+
+注意:
+
+- 警告を非表示にすることで将来の非互換へ気づきにくくなる可能性があります。開発・検証時には警告を有効化することをおすすめします。
+
+警告表示を再有効化するには（開発者向け）:
+
+- `script.js` 内の `initializePyodide()` で設定している `warnings.filterwarnings('ignore', ...)` の行をコメントアウトする
+- もしくは `pyodide.setStderr` のフィルタで `warning` を除外している条件分岐を削除する
+
 ## 互換性
 
 - モダンブラウザ (Chrome, Firefox, Safari, Edge) に対応
