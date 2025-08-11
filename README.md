@@ -59,6 +59,88 @@ print(df.describe())
 - サービスワーカーや CDN のキャッシュを活用すると体感速度が向上します（GitHub Pages + CDN キャッシュで十分に実用的です）。
 - ファイル I/O はブラウザの仮想 FS 内で完結します。ローカルファイルは `<input type="file">` などで読み込んでから扱ってください。
 
+### Excel ファイルの読み込み（pandas）
+
+ブラウザ上でも `pandas.read_excel` を使えます。ローカルファイルか URL のどちらかで取り込みます。
+
+1. ローカルの .xlsx をアップロードして読む（推奨・簡単）
+
+- 画面の「Excel を読み込む (.xlsx)」にファイルを選ぶと、仮想 FS の `/tmp/<ファイル名>` に保存されます。
+- その後、エディタのサンプルを実行:
+
+```python
+import pandas as pd
+import openpyxl  # xlsx読み込みエンジン
+df = pd.read_excel('/tmp/yourfile.xlsx', engine='openpyxl')
+print(df.head())
+```
+
+2. 公開 URL から読む（GitHub Pages 上の同一オリジンを推奨）
+
+Python のみで URL 直読み:
+
+```python
+import pyodide_http
+pyodide_http.patch_all()
+
+import pandas as pd
+import openpyxl
+url = 'https://<your-gh-pages-domain>/browser-python-runner/data/sample.xlsx'
+df = pd.read_excel(url, engine='openpyxl')
+print(df.shape)
+```
+
+もしくは JS で fetch して FS へ保存してから読む（CORS の影響を受けにくい）:
+
+```javascript
+// script.js 例
+const url = "https://.../sample.xlsx";
+const res = await fetch(url, { mode: "cors" });
+const buf = new Uint8Array(await res.arrayBuffer());
+pyodide.FS.writeFile("/tmp/sample.xlsx", buf);
+```
+
+```python
+import pandas as pd, openpyxl
+df = pd.read_excel('/tmp/sample.xlsx', engine='openpyxl')
+```
+
+注意:
+
+- .xlsx は `openpyxl` を使います（コード内で `import openpyxl` を入れると自動取得されます）。
+- .xls を扱う場合は `xlrd` が必要です。
+- 外部ドメインの URL は CORS 許可が必要です。同一オリジン（この GitHub Pages 内）が安全です。
+
+### トラブルシューティング: zipfile.BadZipFile: File is not a zip file
+
+`pandas.read_excel(..., engine="openpyxl")` 実行時に次のエラーが出る場合があります:
+
+```
+zipfile.BadZipFile: File is not a zip file
+```
+
+主な原因:
+
+- .xls（古い Excel 形式）を .xlsx にリネームしただけで中身が旧形式のまま
+- 実体が CSV/TSV だが拡張子が .xlsx になっている
+- ダウンロード失敗などで壊れたファイル
+
+対策:
+
+1. 本物の .xlsx として保存し直す
+
+- Excel/スプレッドシートで開き、「名前を付けて保存」→「Excel ブック (\*.xlsx)」を選択
+
+2. .xls のまま読みたい場合
+
+- `xlrd` が必要です。Pyodide では純 Python 版 `xlrd` を `micropip` でインストールしてから `engine='xlrd'` を指定してください（ただし xlrd 2.x は .xls 非対応。1.2.0 が必要なケースがあります。互換性に注意）。
+
+3. CSV/TSV の可能性
+
+- `pandas.read_csv(path)` で読み込みを試してください。
+
+本アプリのファイルアップロード時は、先頭バイトに 'PK'（Zip シグネチャ）があるかを簡易チェックし、拡張子 .xlsx なのに Zip でない場合は警告を表示します。
+
 ## 表示ノイズの抑制について
 
 本アプリは、学習やデモ用途での見やすさを重視し、以下のような「動作に支障のないメッセージ」を出力欄に表示しない方針を採用しています。
