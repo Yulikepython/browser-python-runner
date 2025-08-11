@@ -6,6 +6,7 @@ const loadingIndicator = document.getElementById("loading-indicator");
 
 let pyodide = null;
 let editor = null; // CodeMirror instance
+let lastUploadedIsXls = false; // 直近にアップロードした拡張子が .xls かどうか
 
 // --- アップロード関連の設定 ---
 const MAX_FILE_SIZE_MB = 20;  // 1ファイルの上限
@@ -426,7 +427,9 @@ function setupFileLoader() {
 
         // 内容がZipベース(.xlsx)かの簡易チェック（PK\x.. シグネチャ）
         const isZipLike = buf.length >= 2 && buf[0] === 0x50 && buf[1] === 0x4b; // 'PK'
-        const lowerName = file.name.toLowerCase();
+  const lowerName = file.name.toLowerCase();
+  // 直近アップロードが .xls かを記録（Info出力制御に利用）
+  lastUploadedIsXls = lowerName.endsWith('.xls');
         if (lowerName.endsWith('.xlsx') && !isZipLike) {
           appendOutput('[Warning] 拡張子は .xlsx ですが、Zip形式ではないため壊れているか .xls/.csv の可能性があります。Excelで「別名で保存」→「Excel ブック (*.xlsx)」で保存し直してください。\n');
         }
@@ -548,27 +551,43 @@ async function ensurePurePythonPackages(code) {
   // micropip をロード
   await pyodide.loadPackage('micropip');
 
-  const pkgs = [];
-  if (needsOpenpyxl) pkgs.push('openpyxl');
-  // xlrd 2.x は .xls を読めないため、互換性の高い 1.2.0 を指定
-  if (needsXlrd) pkgs.push('xlrd==1.2.0');
-  if (!pkgs.length) return;
+  // 既存インストール可否をモジュール名で確認し、必要時のみインストール
+  const requirements = [];
+  if (needsOpenpyxl) requirements.push({ importName: 'openpyxl', pipSpec: 'openpyxl' });
+  if (needsXlrd) requirements.push({ importName: 'xlrd', pipSpec: 'xlrd==1.2.0' });
+  if (!requirements.length) return;
 
-  // 既にインポート可能ならスキップ。Pyodideではトップレベルawaitが使える。
+  // .xls を実際にアップロードしている場合のみ Info を出す（ヒントコードの .xls 文字列で誤検出しない）
+  const hasXlsExt = !!lastUploadedIsXls;
+
   const py = [
     'import importlib',
-    'import micropip',
-    `pkgs = ${JSON.stringify(pkgs)}`,
-    'for p in pkgs:',
+  'import micropip',
+  'HAS_XLS_EXT = ' + (hasXlsExt ? 'True' : 'False'),
+    `requirements = ${JSON.stringify(requirements)}`,
+    '',
+    'def _parse_ver(s):',
     '    try:',
-    '        importlib.import_module(p)',
+    "        return tuple(int(x) for x in str(s).split('.')[:3])",
+    '    except Exception:',
+    '        return (0,)',
+    '',
+    'for item in requirements:',
+    "    mod = item['importName']",
+    "    pip_spec = item['pipSpec']",
+    '    try:',
+    '        m = importlib.import_module(mod)',
+    "        if mod == 'xlrd':",
+    "            ver = getattr(m, '__version__', None)",
+  "            if ver and _parse_ver(ver) >= (2, 0, 0) and HAS_XLS_EXT:",
+  "                print('[Info] xlrd >= 2.0 は .xls を読み込めません。必要なら .xlsx に変換してください。')",
     '        continue',
-  '    except Exception:',
-  '        pass',
+    '    except Exception:',
+    '        pass',
     '    try:',
-    '        await micropip.install(p)',
-    '    except Exception as e:',
-    '        print(f"[Warning] micropip install failed for {p}: {e}")'
+    '        await micropip.install(pip_spec)',
+  '    except Exception as e:',
+  '        print(f"[Warning] micropip install failed for {pip_spec}: {e}")'
   ].join('\n');
   await pyodide.runPythonAsync(py);
 }
