@@ -402,86 +402,84 @@ function setupFileLoader() {
   if (input) {
     input.addEventListener('change', async (e) => {
       try {
-        const file = e.target.files && e.target.files[0];
-        if (!file) return;
+        const files = Array.from(e.target.files || []);
+        if (!files.length) return;
         if (!pyodide) {
           appendOutput("Pyodideが準備できていません。\n");
           return;
         }
-
-        // 1ファイルのサイズチェック
-        const fileSizeMB = file.size / (1024 * 1024);
-        if (fileSizeMB > MAX_FILE_SIZE_MB) {
-          appendOutput(`[Error] ファイルが大きすぎます (${fileSizeMB.toFixed(2)} MB)。上限は ${MAX_FILE_SIZE_MB} MB です。\n`);
-          return;
-        }
-
         // /tmp ディレクトリ確保
         try { pyodide.FS.mkdir('/tmp'); } catch (_) {}
 
-        // 受け取ったファイルをPyodideの仮想FSへ保存
-        const buf = new Uint8Array(await file.arrayBuffer());
-        const mountPath = `/tmp/${file.name}`;
-        pyodide.FS.writeFile(mountPath, buf);
-        appendOutput(`アップロード完了: ${mountPath}\n`);
-
-        // 内容がZipベース(.xlsx)かの簡易チェック（PK\x.. シグネチャ）
-        const isZipLike = buf.length >= 2 && buf[0] === 0x50 && buf[1] === 0x4b; // 'PK'
-  const lowerName = file.name.toLowerCase();
-  // 直近アップロードが .xls かを記録（Info出力制御に利用）
-  lastUploadedIsXls = lowerName.endsWith('.xls');
-        if (lowerName.endsWith('.xlsx') && !isZipLike) {
-          appendOutput('[Warning] 拡張子は .xlsx ですが、Zip形式ではないため壊れているか .xls/.csv の可能性があります。Excelで「別名で保存」→「Excel ブック (*.xlsx)」で保存し直してください。\n');
+        let injectedSnippets = [];
+        let uploadedCount = 0;
+        for (const file of files) {
+          // 1ファイルのサイズチェック
+          const fileSizeMB = file.size / (1024 * 1024);
+            if (fileSizeMB > MAX_FILE_SIZE_MB) {
+              appendOutput(`[Error] スキップ: ${file.name} は ${fileSizeMB.toFixed(2)} MB (上限 ${MAX_FILE_SIZE_MB} MB)\n`);
+              continue;
+            }
+          try {
+            const buf = new Uint8Array(await file.arrayBuffer());
+            const mountPath = `/tmp/${file.name}`;
+            pyodide.FS.writeFile(mountPath, buf);
+            uploadedCount++;
+            appendOutput(`アップロード完了: ${mountPath}\n`);
+            const lowerName = file.name.toLowerCase();
+            lastUploadedIsXls = lowerName.endsWith('.xls');
+            const isZipLike = buf.length >= 2 && buf[0] === 0x50 && buf[1] === 0x4b;
+            if (lowerName.endsWith('.xlsx') && !isZipLike) {
+              appendOutput('[Warning] 拡張子は .xlsx ですがZip形式ではありません。壊れているか .xls/.csv の可能性があります。\n');
+            }
+            // 個々のファイル向け snippet
+            injectedSnippets.push(
+              [
+                `# --- ${file.name} を読み込む例 ---`,
+                'import pandas as pd',
+                'from pathlib import Path',
+                'import zipfile',
+                'try:\n    import openpyxl  # noqa: F401\nexcept Exception:\n    pass',
+                `path = r"${mountPath}"`,
+                'def read_table_auto(path: str) -> pd.DataFrame:',
+                '    p = Path(path)',
+                "    ext = p.suffix.lower()",
+                "    if ext == '.xlsx':",
+                "        with open(path, 'rb') as f:\n            head = f.read(4)",
+                "        if not (len(head) >= 2 and head[0] == 0x50 and head[1] == 0x4B):",
+                "            try:\n                df_csv = pd.read_csv(path, engine='python', sep=None)\n                print('[Warning] 拡張子は .xlsx ですがCSVとして読み込みました。')\n                return df_csv\n            except Exception as _e:\n                raise zipfile.BadZipFile('Not a zip-based .xlsx (possibly .xls or csv)') from _e",
+                "        return pd.read_excel(path, engine='openpyxl')",
+                "    elif ext == '.xls':",
+                "        try:\n            import xlrd  # noqa: F401\n        except Exception as e:\n            raise RuntimeError('xls 読み込みには xlrd が必要です。 .xlsx に保存し直してください。') from e",
+                "        return pd.read_excel(path, engine='xlrd')",
+                "    else:",
+                "        return pd.read_csv(path, engine='python', sep=None)",
+                'try:',
+                '    df = read_table_auto(path)',
+                "    print('===', Path(path).name, 'head ===')",
+                '    print(df.head())',
+                'except zipfile.BadZipFile:',
+                "    print('[Error] 有効な .xlsx ではありません (恐らく .xls をリネーム)。')",
+                ''
+              ].join('\n')
+            );
+          } catch (fileErr) {
+            appendOutput(`[Error] ${file.name} の取り込みに失敗: ${fileErr}\n`);
+          }
         }
-
-        // エディタへサンプルコードを挿入（上書きはしない。先頭に追記）
-        const hint = [
-          '# ファイルを自動判別して読み込むサンプル',
-          'import pandas as pd',
-          'from pathlib import Path',
-          'import zipfile',
-          '# .xlsx を扱う場合は openpyxl が必要',
-          'try:\n    import openpyxl  # noqa: F401\nexcept Exception:\n    pass',
-          `path = r"${mountPath}"`,
-          '',
-          'def read_table_auto(path: str) -> pd.DataFrame:',
-          '    p = Path(path)',
-          "    ext = p.suffix.lower()",
-          "    if ext == '.xlsx':",
-          "        # Zipシグネチャを簡易確認",
-          "        with open(path, 'rb') as f:\n            head = f.read(4)",
-          "        if not (len(head) >= 2 and head[0] == 0x50 and head[1] == 0x4B):",
-          "            # 見かけは .xlsx だが中身がZipでない場合、CSVとしてフォールバック",
-          "            try:\n                df_csv = pd.read_csv(path, engine='python', sep=None)\n                print('[Warning] 拡張子は .xlsx ですがCSVとして読み込みました。正しい形式で保存し直すことをおすすめします。')\n                return df_csv\n            except Exception as _e:\n                raise zipfile.BadZipFile('Not a zip-based .xlsx (possibly .xls or csv)') from _e",
-          "        return pd.read_excel(path, engine='openpyxl')",
-          "    elif ext == '.xls':",
-          "        # 古いExcel形式。xlrd が必要（v2以降は .xls 非対応のため注意）",
-          "        try:\n            import xlrd  # noqa: F401\n        except Exception as e:\n            raise RuntimeError('xls 読み込みには xlrd が必要です。可能なら .xlsx に保存し直してください。') from e",
-          "        return pd.read_excel(path, engine='xlrd')",
-          "    else:",
-          "        # 最後はcsvとして試す",
-          "        return pd.read_csv(path, engine='python', sep=None)",
-          '',
-          'try:',
-          '    df = read_table_auto(path)',
-          '    print(df.head())',
-          'except zipfile.BadZipFile as e:',
-          "    print('[Error] このファイルは有効な .xlsx ではありません。多くの場合、.xls を .xlsx にリネームした時に発生します。Excelで .xlsx として保存し直してください。')",
-          '    # CSVとしての読み込みにも失敗したため終了',
-          ''
-        ].join("\n");
-        const current = editor.getValue();
-        editor.setValue(hint + current);
+        if (uploadedCount) {
+          const current = editor.getValue();
+          editor.setValue(injectedSnippets.join('\n') + '\n' + current);
+        }
         updateUsageDisplay(usageDisplay);
         const totalMB = getDirSizeBytes('/tmp') / (1024 * 1024);
         if (totalMB > MAX_TOTAL_SIZE_MB) {
-          appendOutput(`[Warning] /tmp の合計使用量が ${totalMB.toFixed(2)} MB です。目安の ${MAX_TOTAL_SIZE_MB} MB を超えています。\n`);
+          appendOutput(`[Warning] /tmp の合計使用量が ${totalMB.toFixed(2)} MB です (目安 ${MAX_TOTAL_SIZE_MB} MB)。\n`);
         }
       } catch (err) {
         console.error('ファイルの取り込みに失敗:', err);
-        appendOutput(`[Error] ファイルの取り込みに失敗: ${err}\n`);
+        appendOutput(`[Error] 複数ファイルの取り込みでエラー: ${err}\n`);
       } finally {
-        // 同じファイル選択でchangeが発火しないのを防ぐためリセット
         e.target.value = '';
       }
     });
